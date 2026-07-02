@@ -33,43 +33,32 @@ function calculateBonusByProfit(index, total, seller) {
 }
 
 function analyzeSalesData(data, options) {
-  // 1. Проверка входных данных
   if (!data || typeof data !== "object") {
     throw new Error("Некорректные входные данные");
   }
 
   const { sellers, purchase_records, products } = data;
 
-  // Проверка, что поля существуют и это массивы
-  if (!Array.isArray(sellers)) {
+  if (
+    !Array.isArray(sellers) ||
+    !Array.isArray(purchase_records) ||
+    !Array.isArray(products)
+  ) {
     throw new Error("Некорректные входные данные");
   }
-  if (!Array.isArray(purchase_records)) {
-    throw new Error("Некорректные входные данные");
-  }
-  if (!Array.isArray(products)) {
-    throw new Error("Некорректные входные данные");
-  }
-
-  // Проверка на пустые массивы (по требованиям тестов)
-  if (sellers.length === 0) {
-    throw new Error("Некорректные входные данные");
-  }
-  if (purchase_records.length === 0) {
-    throw new Error("Некорректные входные данные");
-  }
-  // products может быть пустым? По тестам — нет, тоже кидаем ошибку
-  if (products.length === 0) {
+  if (
+    sellers.length === 0 ||
+    purchase_records.length === 0 ||
+    products.length === 0
+  ) {
     throw new Error("Некорректные входные данные");
   }
 
-  // 2. Проверка опций
   if (!options || typeof options !== "object") {
     throw new Error("Опции должны быть объектом");
   }
 
   const { calculateRevenue, calculateBonus } = options;
-
   if (
     typeof calculateRevenue !== "function" ||
     typeof calculateBonus !== "function"
@@ -79,7 +68,9 @@ function analyzeSalesData(data, options) {
     );
   }
 
-  // 3. Подготовка статистики по продавцам
+  // Индексы для быстрого доступа
+  const productIndex = Object.fromEntries(products.map((p) => [p.sku, p]));
+
   const sellerStats = sellers.map((seller) => ({
     seller_id: seller.id,
     name: `${seller.first_name} ${seller.last_name}`,
@@ -89,20 +80,15 @@ function analyzeSalesData(data, options) {
     products_sold: {}, // { [sku]: quantity }
   }));
 
-  // 4. Индексы для быстрого доступа
   const sellerIndex = Object.fromEntries(
     sellerStats.map((s) => [s.seller_id, s]),
   );
-  const productIndex = Object.fromEntries(products.map((p) => [p.sku, p]));
 
-  // 5. Сбор статистики
   purchase_records.forEach((record) => {
     const seller = sellerIndex[record.seller_id];
-    if (!seller) {
-      return; // Пропускаем чеки с неизвестными продавцами
-    }
+    if (!seller) return;
 
-    // Считаем выручку по всем позициям чека через переданную функцию
+    // Считаем выручку по позициям чека
     let revenueTotal = 0;
     record.items.forEach((item) => {
       revenueTotal += calculateRevenue(item, productIndex[item.sku]);
@@ -111,7 +97,7 @@ function analyzeSalesData(data, options) {
     seller.revenue += revenueTotal;
     seller.sales_count += 1;
 
-    // Прибыль считаем по каждой позиции
+    // Прибыль по каждой позиции
     record.items.forEach((item) => {
       const product = productIndex[item.sku];
       const costPerUnit =
@@ -119,14 +105,12 @@ function analyzeSalesData(data, options) {
           ? product.purchase_price
           : 0;
       const quantity = typeof item.quantity === "number" ? item.quantity : 0;
-      const costTotal = costPerUnit * quantity;
 
       const itemRevenue = calculateRevenue(item, product);
-      const itemProfit = itemRevenue - costTotal;
+      const itemProfit = itemRevenue - costPerUnit * quantity;
 
       seller.profit += itemProfit;
 
-      // Накопление количества по SKU
       if (!seller.products_sold[item.sku]) {
         seller.products_sold[item.sku] = 0;
       }
@@ -134,19 +118,18 @@ function analyzeSalesData(data, options) {
     });
   });
 
-  // 6. Сортировка по прибыли (убывание)
+  // Сортировка продавцов по прибыли (убывание)
   sellerStats.sort((a, b) => b.profit - a.profit);
 
-  // 7. Бонусы и топ‑10 товаров
   const total = sellerStats.length;
 
   sellerStats.forEach((seller, index) => {
     seller.bonus = calculateBonus(index, total, seller);
 
+    // Формируем топ‑10 товаров: сначала по количеству (убывание), потом по sku (возрастание)
     const topProductsArray = Object.entries(seller.products_sold)
       .map(([sku, quantity]) => ({ sku, quantity }))
       .sort((a, b) => {
-        // Сначала по количеству (убывание), потом по sku (возрастание) — это важно для детерминизма
         if (b.quantity !== a.quantity) {
           return b.quantity - a.quantity;
         }
@@ -157,14 +140,13 @@ function analyzeSalesData(data, options) {
     seller.top_products = topProductsArray;
   });
 
-  // 8. Формирование итогового результата
   return sellerStats.map((seller) => ({
     seller_id: seller.seller_id,
     name: seller.name,
-    revenue: +seller.revenue.toFixed(2),
-    profit: +seller.profit.toFixed(2),
+    revenue: Math.round(seller.revenue * 100) / 100,
+    profit: Math.round(seller.profit * 100) / 100,
     sales_count: seller.sales_count,
     top_products: seller.top_products,
-    bonus: +seller.bonus.toFixed(2),
+    bonus: Math.round(seller.bonus * 100) / 100,
   }));
 }
